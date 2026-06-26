@@ -90,7 +90,15 @@ LWW_FALLBACK_WINNER = "todoist"  # "todoist" | "sonto"
 ALLOW_SONTO_DELETES = False
 
 # Only learn/sync date-ladder placement within a rolling horizon (cheap + low-churn).
+# Filed tasks are read fully from their container; purely-scheduled tasks (no project/area)
+# are discovered from get_day/get_week over this horizon. Overdue day tasks are caught via
+# include_late on `today`, so we don't scan far into the past.
 CALENDAR_HORIZON_DAYS = 14
+DAY_HORIZON_FUTURE_DAYS = 45   # get_day(today..+N)
+WEEK_HORIZON_FUTURE = 6        # get_week(current..+N)
+
+# P2 (one-way Sonto->Todoist) mirrors INCOMPLETE tasks only. Completed/recurring handling is P4.
+SYNC_COMPLETED_TASKS = False
 
 # If a Sonto list_* read comes back empty/errored, never interpret it as a mass delete.
 EMPTY_READ_SANITY_FLOOR = True

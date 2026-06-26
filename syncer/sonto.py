@@ -7,10 +7,27 @@ fleshed out per phase once `introspect` confirms the real argument shapes.
 
 from __future__ import annotations
 
+import base64
 import json
 from typing import Any
 
 from . import mcp_client
+
+
+def stable_id(token: str) -> str:
+    """Sonto area/project/group IDs are base64 Core-Data object tokens whose RAW string varies
+    every read (non-deterministic JSON encoding) but which decode to a stable
+    `uriRepresentation` (e.g. `x-coredata://STORE/Area/p8`). Use the decoded URI as the map
+    key. Task ids (`todoUUID`) are already stable and must NOT be passed here."""
+    if not isinstance(token, str):
+        return token
+    try:
+        obj = json.loads(base64.b64decode(token))
+        impl = obj.get("implementation", obj)
+        return (impl.get("uriRepresentation")
+                or f"{impl.get('storeIdentifier')}/{impl.get('entityName')}/{impl.get('primaryKey')}")
+    except Exception:
+        return token
 
 
 class Sonto:
@@ -90,39 +107,89 @@ class Sonto:
         return self.parse(self._call("list_tags", {})).get("tags", [])
 
     def snapshot_structure(self) -> dict:
-        """Areas, (non-plan) projects with area linkage, and groups. The shape the P1
-        structure mirror consumes."""
+        """Areas, (non-plan) projects with area linkage, and groups. IDs are the STABLE decoded
+        URIs (see stable_id); the raw per-read token is kept only for same-run MCP reads."""
         areas = self.areas()
-        proj_area: dict[str, str] = {}
+        proj_area: dict[str, str] = {}  # stable project id -> stable area id
         for a in areas:
+            sa = stable_id(a["areaID"])
             for p in self.area_detail(a["areaID"]).get("projects", []):
-                proj_area[p["projectID"]] = a["areaID"]
+                proj_area[stable_id(p["projectID"])] = sa
 
         projects = []
         for p in self.all_projects(include_completed=False):
             if p.get("isPlan"):
                 continue  # plans (yearly/quarterly) are not task projects -> excluded
+            sp = stable_id(p["projectID"])
             projects.append({
-                "id": p["projectID"], "name": p["name"], "notes": p.get("notes", ""),
-                "area_id": proj_area.get(p["projectID"]), "tags": p.get("tags", []),
+                "id": sp, "raw": p["projectID"], "name": p["name"], "notes": p.get("notes", ""),
+                "area_id": proj_area.get(sp), "tags": p.get("tags", []),
             })
 
         groups = []
         for a in areas:
+            sa = stable_id(a["areaID"])
             for g in self.groups_in_area(a["areaID"]):
-                groups.append({"id": g["groupID"], "name": g["name"],
-                               "area_id": a["areaID"], "project_id": None})
+                groups.append({"id": stable_id(g["groupID"]), "name": g["name"],
+                               "area_id": sa, "project_id": None})
         for p in projects:
-            for g in self.groups_in_project(p["id"]):
-                groups.append({"id": g["groupID"], "name": g["name"],
+            for g in self.groups_in_project(p["raw"]):
+                groups.append({"id": stable_id(g["groupID"]), "name": g["name"],
                                "project_id": p["id"], "area_id": None})
 
         return {
-            "areas": [{"id": a["areaID"], "name": a["name"], "emoji": a.get("emoji", ""),
+            "areas": [{"id": stable_id(a["areaID"]), "name": a["name"], "emoji": a.get("emoji", ""),
                        "notes": a.get("notes", ""), "tags": a.get("tags", [])} for a in areas],
             "projects": projects,
             "groups": groups,
         }
+
+    def snapshot_tasks(self, today=None, *, include_completed: bool = False) -> list[dict]:
+        """All tasks, merged from container reads (inbox/area/project) and the scheduled-task
+        horizon (get_day/get_week). Each task dict carries its container ids (projectID/areaID/
+        groupID) and schedule (scheduledDayISO or scheduledWeek/Year). Completed tasks are
+        excluded unless include_completed."""
+        import datetime as _dt
+
+        from . import config
+
+        today = today or _dt.date.today()
+        records: dict[str, dict] = {}
+
+        def merge(todos):
+            for t in todos:
+                u = t.get("todoUUID")
+                if not u:
+                    continue
+                rec = records.setdefault(u, {})
+                for k, v in t.items():
+                    if rec.get(k) in (None, "", [], {}) or k not in rec:
+                        rec[k] = v
+
+        # Container reads — complete coverage of filed tasks (+ inbox).
+        merge(self.parse(self.get_inbox()).get("todos", []))
+        for a in self.areas():
+            merge(self.area_detail(a["areaID"]).get("todos", []))
+        for p in self.all_projects(include_completed=False):
+            if p.get("isPlan"):
+                continue
+            merge(self.parse(self._call("get_project", {"project_id": p["projectID"]}))
+                  .get("todos", []))
+
+        # Scheduled-task horizon — catches purely-scheduled (container-less) tasks.
+        for i in range(0, config.DAY_HORIZON_FUTURE_DAYS + 1):
+            d = (today + _dt.timedelta(days=i)).isoformat()
+            merge(self.parse(self._call("get_day", {"day_iso": d, "include_late": i == 0}))
+                  .get("todos", []))
+        for i in range(0, config.WEEK_HORIZON_FUTURE + 1):
+            ref = (today + _dt.timedelta(weeks=i)).isocalendar()
+            merge(self.parse(self._call("get_week", {"week": ref.week, "year": ref.year}))
+                  .get("todos", []))
+
+        tasks = list(records.values())
+        if not include_completed:
+            tasks = [t for t in tasks if not t.get("completed")]
+        return tasks
 
     # --- writes (built out P1+; argument shapes confirmed via introspect) ---
     def add_task(self, **args) -> Any:  # pragma: no cover - P2+

@@ -54,7 +54,24 @@ Recurring tasks: instances only (Todoist owns recurrence).
   Live Todoist now mirrors Sonto: M×T (4 sections), Personal (1), Sonto (6), Plans (empty);
   pre-existing Inbox/Privé/Stevinstraat left untouched (one-way, no deletes). `--dry-run`
   still previews; matching is name-within-parent so it re-discovers applied objects.
-- P2 tasks, P3 reverse + conflicts, P4 hard mappings, P5 cron: not started.
+- **P2 — tasks (one-way Sonto→Todoist): dry-run COMPLETE & verified; apply pending review.**
+  47 incomplete tasks place correctly: 25 in sections, 2 in project-root, 20 Inbox (genuine
+  inbox + purely-scheduled). Day→`due.date`, week→locale-first-day `due` + `sonto-week-YYYY-WW`
+  label (verified: week task due 2026-06-22 Mon + label `sonto-week-2026-W26`), important→P1,
+  notes→description, tags→labels. Completed tasks (47) excluded (P4). Tasks NOT yet applied.
+- P3 reverse + conflicts, P4 hard mappings (completion/deletes/recurring), P5 cron: not started.
+
+## GOTCHA: Sonto entity IDs are per-read-unstable (must decode)
+
+Sonto **area/project/group** IDs (`areaID`/`projectID`/`groupID`) are base64 Core-Data object
+tokens whose RAW STRING CHANGES ON EVERY READ (non-deterministic JSON encoding) but which
+decode to a stable `uriRepresentation` (e.g. `x-coredata://STORE/Area/p8`). **Always key the
+id_map on `sonto.stable_id(token)`, never the raw token.** Task IDs (`todoUUID`) ARE stable
+UUIDs — do not decode those. This bug first showed as duplicated id_map rows (2×) + tasks
+falling to Inbox; fixed in `sonto.stable_id` + used in `snapshot_structure` and
+`_resolve_placement`. Also: a Sonto project's area membership is only correct once stable ids
+are used — which revealed the `Sonto` project actually lives in the `M×T` area (P1 had created
+it top-level), handled by a `project_move` (see `adopt.Plan.moves` / `reconcile._apply_moves`).
 
 ## Introspection findings (P0, 2026-06-26) — verified live
 
@@ -101,10 +118,10 @@ Server `Space - Life Planner` v1.6.1; **36 tools**. Full schemas committed at
 | `syncer/todoist_client.py` | done | /sync read, completed read, batched writes (uuid/temp_id) |
 | `syncer/introspect.py` | done | P0 truth-finder: tools/list dump + read-only sample payloads |
 | `syncer/main.py`, `__main__.py`, `run.py` | done | CLI: --introspect/--once/--status/--set-phase, run-lock |
-| `syncer/mapping.py` | partial | week/priority + structure helpers done; task translation = P2+ |
-| `syncer/sonto.py` | partial | reads + `snapshot_structure()` done; task writes = P2+ |
-| `syncer/adopt.py` | done (P1) | name-based structure matcher + ordered create plan (temp_ids) |
-| `syncer/reconcile.py` | partial | P1 structure pass (dry-run + gated apply) done; tasks = P2+ |
+| `syncer/mapping.py` | done (P1/P2) | week/priority/structure + task helpers (`task_item_args`, due/labels) |
+| `syncer/sonto.py` | done (P1/P2) | reads, `stable_id`, `snapshot_structure`, `snapshot_tasks` |
+| `syncer/adopt.py` | done (P1) | structure matcher + ordered create plan + `moves` (re-parent) |
+| `syncer/reconcile.py` | partial | structure pass (create+move) + P2 task create pass; updates/deletes = P3/P4 |
 
 ## How to run (target)
 
@@ -154,6 +171,23 @@ python run.py --status          # last run, token health, pending conflicts
 - Verified live dry-run, then **APPLIED** (user chose "apply now"): 15 creates succeeded;
   re-run proved idempotent (0 creates). Todoist structure confirmed via live read (7 projects /
   16 sections incl. pre-existing). id_map seeded (in gitignored `data/sync.db`).
+### 2026-06-26 (cont.) — P2
+
+- Built P2 task sync: `sonto.snapshot_tasks()` (merges container reads + get_day/get_week
+  horizon; incomplete only), `mapping.task_item_args`/`task_due_and_labels`/`week_to_due_date`,
+  `reconcile._task_pass` (create unmapped tasks, batched `item_add` w/ todoUUID temp_ids,
+  id_map seed). Integrated into `run()` after the structure pass.
+- **Hit + fixed the unstable-id bug** (see GOTCHA above): added `sonto.stable_id`, re-keyed the
+  map, added `project_move` handling for the Sonto-under-M×T correction. Refactored structure
+  apply into `_seed_matched` (always; non-destructive) + `_create_structure` + `_apply_moves`.
+- Applied the structure correction to Todoist (Sonto is now a sub-project of M×T; 15 mapped).
+- **P2 task dry-run verified correct** (placement/schedule/labels). Tasks NOT yet written —
+  awaiting review before applying the 47 `item_add`s.
+- NEXT: on approval, apply P2 task creates; then P2b task UPDATES (push Sonto edits to Todoist
+  on hash change); then P3 (reverse Todoist→Sonto + strict-LWW conflicts), P4
+  (completion/deletes/recurring-instance/tags-on-projects), P5 (launchd cron).
+
+### (superseded) earlier P2 note
 - NEXT: **P2 — tasks (one-way Sonto→Todoist).** For each Sonto task: content=name,
   notes (flatten any Todoist-only []/[x] later; for S→T just pass notes), important→priority,
   day-schedule→`due.date`, week-schedule→`due` on locale-first-day + `sonto-week-YYYY-WW`

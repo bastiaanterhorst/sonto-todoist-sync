@@ -83,10 +83,78 @@ def todoist_section_args(name: str, project: str) -> dict:
     return {"name": name, "project_id": project}
 
 
-# --- Full entity translation (tasks etc. land in P2+) -----------------------
+# --- Tasks (P2) -------------------------------------------------------------
 
-def sonto_to_todoist(entity):  # pragma: no cover - P2+
-    raise NotImplementedError("Task translation lands in P2+; see docs/PLAN.md")
+def normalize_tags(tags) -> list[str]:
+    """Sonto task `tags` -> list of label names (handles strings or {name/tagName} dicts)."""
+    out = []
+    for t in tags or []:
+        if isinstance(t, str):
+            out.append(t)
+        elif isinstance(t, dict):
+            n = t.get("name") or t.get("tagName")
+            if n:
+                out.append(n)
+    return out
+
+
+def week_to_due_date(week: int, year: int) -> _dt.date:
+    """Todoist due date for a Sonto week: the first day of that ISO week per the system locale."""
+    monday = _dt.date.fromisocalendar(year, week, 1)
+    return config.first_day_of_week(monday)
+
+
+def task_schedule(task: dict):
+    """-> (kind, day_iso, week, week_year) where kind in {'day','week','none'}."""
+    if task.get("scheduledDayISO"):
+        return ("day", task["scheduledDayISO"], None, None)
+    if task.get("scheduledWeek"):
+        return ("week", None, int(task["scheduledWeek"]), int(task["scheduledWeekYear"]))
+    return ("none", None, None, None)
+
+
+def task_due_and_labels(task: dict):
+    kind, day_iso, week, year = task_schedule(task)
+    labels = normalize_tags(task.get("tags"))
+    due = None
+    if kind == "day":
+        due = {"date": day_iso}
+    elif kind == "week":
+        due = {"date": week_to_due_date(week, year).isoformat()}
+        labels = labels + [week_label(year, week)]  # round-trip source of truth
+    return due, labels
+
+
+def task_item_args(task: dict, project_id: str | None = None,
+                   section_id: str | None = None) -> dict:
+    """Todoist `item_add`/`item_update` args for a Sonto task."""
+    due, labels = task_due_and_labels(task)
+    args: dict = {"content": (task.get("name") or "").strip()}
+    if task.get("notes"):
+        args["description"] = task["notes"]
+    args["priority"] = important_to_priority(bool(task.get("isImportant")))
+    if labels:
+        args["labels"] = labels
+    if due:
+        args["due"] = due
+    if project_id:
+        args["project_id"] = project_id
+    if section_id:
+        args["section_id"] = section_id
+    return args
+
+
+def task_canonical(task: dict, project_ref: str | None, section_ref: str | None) -> dict:
+    due, labels = task_due_and_labels(task)
+    return {
+        "content": (task.get("name") or "").strip(),
+        "notes": (task.get("notes") or "").strip(),
+        "important": bool(task.get("isImportant")),
+        "due": (due or {}).get("date", ""),
+        "labels": labels,
+        "project": project_ref or "inbox",
+        "section": section_ref or "",
+    }
 
 
 def todoist_to_sonto(entity):  # pragma: no cover - P1+

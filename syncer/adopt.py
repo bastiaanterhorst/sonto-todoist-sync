@@ -21,6 +21,7 @@ from .model import EntityType, canonical_hash
 class Plan:
     matched: list = field(default_factory=list)   # (entity_type, sonto_id, todoist_id, hash)
     creates: list = field(default_factory=list)   # dicts (see _create)
+    moves: list = field(default_factory=list)     # dicts: re-parent an existing Todoist project
     area_map: dict = field(default_factory=dict)  # sonto area id -> todoist project id|temp
     project_map: dict = field(default_factory=dict)
     group_map: dict = field(default_factory=dict)
@@ -85,6 +86,15 @@ def match_structure(sonto: dict, td_projects: list[dict], td_sections: list[dict
         existing = None
         if parent_td and not parent_td.startswith("tmp_"):
             existing = sub_by_parent_name.get((parent_td, _norm(p["name"])))
+            if not existing:
+                # Project exists but at the wrong level (e.g. top-level, or under another
+                # parent) -> match by name and schedule a re-parent (project_move).
+                cand = top_by_name.get(_norm(p["name"]))
+                if cand and cand["id"] not in consumed:
+                    existing = cand
+                    plan.moves.append({"entity_type": EntityType.PROJECT,
+                                       "todoist_id": cand["id"], "parent": parent_td,
+                                       "name": p["name"]})
         elif not p["area_id"]:
             existing = top_by_name.get(_norm(p["name"]))
         if existing and existing["id"] not in consumed:
