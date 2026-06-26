@@ -218,10 +218,28 @@ python run.py --status          # last run, token health, pending conflicts
   and full idempotency.
 - **P5**: documented launchd setup in README + added `deploy/*.plist.example`; **did not install
   the job** (per instruction).
-- Open/next (not blocking a working two-way sync): reverse structure creation; sub-task
-  flatten; tags on projects/areas reverse; enabling `ALLOW_SONTO_DELETES` after the
-  tombstone/sanity-floor paths get more real-world soak; switching reads to the incremental
-  Todoist `sync_token` (currently full-sync each run — fine at this scale).
+- Open/next (not blocking a working two-way sync): sub-task flatten; tags on projects/areas
+  reverse; enabling `ALLOW_SONTO_DELETES` after the tombstone/sanity-floor paths get more
+  real-world soak; switching reads to the incremental Todoist `sync_token` (currently full-sync
+  each run — fine at this scale).
+
+### 2026-06-26 (cont.) — reverse structure + README differences doc
+
+- **Reverse structure sync** (`reconcile._reverse_structure`): Todoist-only projects become
+  Sonto areas/projects by the user's rule — a top-level Todoist project WITH sub-projects →
+  Sonto **Area**, otherwise → **Project**; sub-projects → Projects; sections → Groups. Runs
+  before the task pass (and refreshes the Sonto snapshot after) so the newly-homed tasks
+  reverse-create in the same run. `sonto.extract_id` parses created area/project/group ids.
+- Applied live: created Sonto projects **Privé** (groups Dana/Boodschappen/Algemeen/Vakantie,
+  8 tasks) and **Stevinstraat** (group Tuin, 4 tasks) from the Todoist-only projects; 12 tasks
+  reverse-created into them; idempotent (22 structure entities mapped now).
+- **README**: added a prominent "⚠️ Todoist ↔ Sonto: where the mapping is NOT 1:1" section
+  (containers/Areas-vs-Projects, scheduling ladder vs due/deadline, priority 4→2, sub-tasks,
+  tags vs labels, notes/URL autolink, completion/recurring, conflicts=Todoist-wins, deletes,
+  Sonto-only states/ordering). Per the user request.
+- Still gated: deletes into Sonto, sub-task flatten, project/area tag reverse. Reverse structure
+  currently makes ALL top-level Todoist-only projects Areas-or-Projects by hierarchy; it does
+  not (yet) reconsider an existing Sonto kind if the Todoist hierarchy later changes.
 
 ### (superseded) earlier P2 note
 - NEXT: **P2 — tasks (one-way Sonto→Todoist).** For each Sonto task: content=name,

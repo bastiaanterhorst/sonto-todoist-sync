@@ -54,6 +54,14 @@ def run(store: store_mod.Store, *, dry_run: bool = True) -> dict:
         log.info("structure: %d creates, %d moves pending (dry-run/readonly: not applied)",
                  len(plan.creates), len(plan.moves))
 
+    # Reverse structure (Todoist-only projects -> Sonto areas/projects/groups). Must run before
+    # the task pass so those tasks have a Sonto home. Gated like other reverse writes.
+    will_reverse = (not dry_run) and phase == config.PHASE_TWOWAY and config.ALLOW_SONTO_WRITES
+    rev_struct = _reverse_structure(store, sonto, struct, td.get("projects", []),
+                                    td.get("sections", []), inbox_id, will_apply=will_reverse)
+    if rev_struct:
+        struct = sonto.snapshot_structure()  # refresh so the task pass sees new containers
+
     # Tasks (two-way).
     task_result = _reconcile_tasks(store, sonto, todoist, struct, td, inbox_id,
                                    dry_run=dry_run, phase=phase)
@@ -491,6 +499,108 @@ def _save_token(store, resp) -> None:
     tok = resp.get("sync_token")
     if tok:
         store.set_state("todoist_sync_token", tok)
+
+
+def _reverse_structure(store, sonto, struct, td_projects, td_sections, inbox_id, *,
+                       will_apply) -> int:
+    """Create Sonto structure for Todoist-only projects. Rule: a top-level Todoist project WITH
+    child projects -> Sonto Area; otherwise -> Sonto Project. Sub-projects -> Projects (under
+    the parent area); sections -> Groups. Returns the number of Sonto entities created."""
+    from collections import defaultdict
+    children = defaultdict(list)
+    for p in td_projects:
+        if p.get("parent_id"):
+            children[p["parent_id"]].append(p)
+
+    def mapped(pid):
+        return (store.map_by_todoist(EntityType.AREA, pid)
+                or store.map_by_todoist(EntityType.PROJECT, pid))
+
+    tops = [p for p in td_projects
+            if p["id"] != inbox_id and not p.get("parent_id") and not mapped(p["id"])]
+    subs = [p for p in td_projects if p.get("parent_id") and not mapped(p["id"])]
+    secs = [s for s in td_sections if not store.map_by_todoist(EntityType.GROUP, s["id"])]
+    plan = [("area" if children.get(p["id"]) else "project", p) for p in tops]
+
+    if not (tops or subs or secs):
+        return 0
+
+    if not will_apply:
+        for kind, p in plan:
+            log.info("  +Sonto %-7s %r (Todoist project -> %s)", kind, p["name"], kind)
+        for p in subs:
+            log.info("  +Sonto project %r (Todoist sub-project)", p["name"])
+        if secs:
+            log.info("  +Sonto groups <- %d Todoist sections", len(secs))
+        log.info("reverse structure: %d pending (needs twoway + ALLOW_SONTO_WRITES)",
+                 len(tops) + len(subs) + len(secs))
+        return 0
+
+    raw = sonto_mod.Sonto.raw_index(struct)
+    new_raw, new_kind = {}, {}
+    now, applied = _now_iso(), 0
+
+    def parent(td_parent_id):
+        if td_parent_id in new_raw:
+            return new_raw[td_parent_id], new_kind[td_parent_id]
+        for et, kind in ((EntityType.AREA, "area"), (EntityType.PROJECT, "project")):
+            m = store.map_by_todoist(et, td_parent_id)
+            if m and raw.get(m.sonto_id):
+                return raw[m.sonto_id], kind
+        return None, None
+
+    def seed(et, token, td_id, canon):
+        h = canonical_hash(canon)
+        with store.transaction():
+            store.upsert_map(entity_type=et, sonto_id=sonto_mod.stable_id(token), todoist_id=td_id,
+                             last_synced_hash=h, sonto_hash=h, todoist_hash=h,
+                             last_synced_at=now, deleted=0)
+
+    for kind, p in plan:
+        try:
+            if kind == "area":
+                tok = sonto.extract_id(sonto.add_area(name=p["name"]), "area")
+                seed(EntityType.AREA, tok, p["id"], mapping.area_canonical(p))
+            else:
+                tok = sonto.extract_id(sonto.add_project(name=p["name"]), "project")
+                seed(EntityType.PROJECT, tok, p["id"], mapping.project_canonical(p, ""))
+            if not tok:
+                log.warning("reverse structure: no id for %r", p["name"]); continue
+            new_raw[p["id"]], new_kind[p["id"]] = tok, kind
+            applied += 1
+        except Exception as e:  # noqa: BLE001
+            log.warning("reverse structure (top) failed for %r: %s", p["name"], e)
+
+    for p in subs:
+        try:
+            ptok, _ = parent(p["parent_id"])
+            kwargs = {"name": p["name"]}
+            if ptok:
+                kwargs["area_id"] = ptok
+            tok = sonto.extract_id(sonto.add_project(**kwargs), "project")
+            if not tok:
+                continue
+            new_raw[p["id"]], new_kind[p["id"]] = tok, "project"
+            seed(EntityType.PROJECT, tok, p["id"], mapping.project_canonical(p, ""))
+            applied += 1
+        except Exception as e:  # noqa: BLE001
+            log.warning("reverse structure (sub) failed for %r: %s", p["name"], e)
+
+    for s in secs:
+        try:
+            ptok, pkind = parent(s["project_id"])
+            if not ptok:
+                continue
+            tok = sonto.extract_id(sonto.add_group(name=s["name"], **{f"{pkind}_id": ptok}), "group")
+            if not tok:
+                continue
+            seed(EntityType.GROUP, tok, s["id"], mapping.group_canonical(s, None))
+            applied += 1
+        except Exception as e:  # noqa: BLE001
+            log.warning("reverse structure (section) failed for %r: %s", s["name"], e)
+
+    log.info("reverse structure applied: %d Sonto areas/projects/groups created", applied)
+    return applied
 
 
 def _report(struct: dict, plan: adopt.Plan) -> None:

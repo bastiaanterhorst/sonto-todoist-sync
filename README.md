@@ -29,12 +29,57 @@ scope — only **instances** are synced; Todoist owns the recurrence definition.
   label), `important` ↔ priority, notes, tags ↔ labels, Inbox.
 - Conflict resolution: strict last-write-wins, falling back to **Todoist-wins** (Sonto exposes
   no per-item modified timestamp).
-- Reverse writes only touch tasks with a real Sonto home (Todoist Inbox or a mapped
-  project/section); Todoist-only-project tasks are left alone.
+- **Reverse structure**: Todoist-only projects become Sonto areas/projects (a top-level project
+  with sub-projects → Area, otherwise → Project; sections → Groups), then their tasks flow in.
 
 Gated / not yet done (see `docs/PLAN.md`, `build-log.md`): deletes **into** Sonto
-(`ALLOW_SONTO_DELETES`, off), reverse structure creation (Todoist project → Sonto area),
-sub-task flattening, and the scheduled job (documented below, intentionally not installed).
+(`ALLOW_SONTO_DELETES`, off), sub-task flattening, project/area tags reverse, and the scheduled
+job (documented below, intentionally not installed).
+
+## ⚠️ Todoist ↔ Sonto: where the mapping is NOT 1:1
+
+Sonto and Todoist model planning differently. The sync does its best, but some things are
+**lossy, one-directional, or deliberately dropped**. Know these before trusting it blindly:
+
+- **Containers (Areas vs Projects).** Sonto separates **Areas** (never-ending life categories)
+  from **Projects** (bounded). Todoist has one generic, nestable "project". Mapping:
+  - Sonto → Todoist: Area → top-level project, Project → sub-project, Group → section.
+  - Todoist → Sonto: a top-level project **with** sub-projects → **Area**; otherwise → **Project**;
+    sub-projects → Projects; sections → Groups.
+  - Consequence: a project's *kind* can change across a round-trip if its hierarchy changes
+    (e.g. give a Sonto Project a sub-project and it becomes an Area-shaped thing).
+- **Scheduling (ladder vs due date).** Sonto schedules on a granularity ladder
+  (unscheduled → week → day → timed event); Todoist has a single **due date** plus a separate
+  **deadline**.
+  - Day → Todoist due date (clean).
+  - **Week → Todoist due date on the first day of that week (per your system locale: Monday in
+    NL, Sunday in US) + a `sonto-week-YYYY-WW` label.** The label is the round-trip source of
+    truth; the date is just so it's usable in Todoist.
+  - Timed calendar events → Todoist due *datetime*; the event's duration / calendar / event-ness
+    is Sonto-only and **dropped**.
+  - **Todoist task `deadline` has no Sonto equivalent** (Sonto deadlines are project-level only)
+    → dropped.
+- **Priority (boolean vs 4 levels).** Sonto `important` is on/off; Todoist is P1–P4.
+  `important` ↔ **P1**; P2/P3/P4 all collapse to *not important* coming back (lossy 4 → 2).
+- **Sub-tasks.** Todoist has real nested sub-tasks; Sonto has none (sub-items are `[ ]`/`[x]`
+  checklist lines inside a task's notes). **Todoist sub-tasks are currently NOT synced** (skipped
+  to avoid duplication).
+- **Tags vs labels.** Sonto tags attach to tasks, projects **and** areas; Todoist labels attach
+  to **tasks only**. Task tags ↔ labels works. Project/area tags are **not mirrored**. And a new
+  Todoist label can't create a Sonto tag (Sonto's MCP exposes no create-tag tool) — only
+  *existing* Sonto tags are settable from Todoist. The `sonto-week-…` label is internal plumbing.
+- **Notes formatting.** Sonto rich text ↔ Todoist Markdown, best-effort. Todoist auto-converts
+  bare URLs into `[title](url)` links; that's cosmetic and normalized so it doesn't ping-pong.
+- **Completion & recurring.** Completion syncs both ways. **Recurring tasks are not modeled in
+  Sonto** — only the current instance syncs; Todoist owns the recurrence (we never delete/recreate
+  a recurring task).
+- **Conflicts.** If the same task is edited on both sides between runs, **Todoist wins** (Sonto
+  exposes no per-item modified timestamp, so strict last-write-wins falls back to Todoist).
+- **Deletes.** Sonto → Todoist deletes propagate. **Todoist → Sonto deletes are OFF by default**
+  (`ALLOW_SONTO_DELETES` in `syncer/config.py`) — deleting from the planner is the highest-risk
+  action.
+- **Sonto-only states.** The in-progress toggle, the "late" indicator, and manual task/section
+  **ordering** are Sonto-only and not represented in Todoist (ordering is intentionally not synced).
 
 ## Layout
 

@@ -232,12 +232,25 @@ class Sonto:
     @staticmethod
     def extract_todo_uuid(result: dict) -> str | None:
         """Pull the new task's todoUUID from an add_task result (tries common shapes)."""
+        return Sonto._extract(result, ("todoUUID",), ("todo", "task", "createdTodo"))
+
+    @staticmethod
+    def extract_id(result: dict, kind: str) -> str | None:
+        """Pull a created area/project/group's id token from an add_* result."""
+        idkey = {"area": "areaID", "project": "projectID", "group": "groupID"}[kind]
+        return Sonto._extract(result, (idkey, "id"), (kind, "created" + kind.capitalize()))
+
+    @staticmethod
+    def _extract(result, idkeys, wrappers):
         if not isinstance(result, dict):
             return None
-        if result.get("todoUUID"):
-            return result["todoUUID"]
-        for key in ("todo", "task", "createdTodo"):
-            v = result.get(key)
-            if isinstance(v, dict) and v.get("todoUUID"):
-                return v["todoUUID"]
+        for k in idkeys:
+            if result.get(k):
+                return result[k]
+        for w in wrappers:
+            v = result.get(w)
+            if isinstance(v, dict):
+                for k in idkeys:
+                    if v.get(k):
+                        return v[k]
         return None
