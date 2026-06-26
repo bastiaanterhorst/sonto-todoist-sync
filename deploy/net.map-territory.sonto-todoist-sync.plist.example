@@ -1,0 +1,41 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  TEMPLATE — not an installed job. To use:
+    1. Replace every CHANGEME with your home path, and check the python3 path.
+    2. mkdir -p <repo>/logs
+    3. cp this file (without .example) to ~/Library/LaunchAgents/
+    4. launchctl load ~/Library/LaunchAgents/net.map-territory.sonto-todoist-sync.plist
+  Requires the Sonto Mac app running with its MCP server enabled (Settings -> AI).
+-->
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>net.map-territory.sonto-todoist-sync</string>
+
+    <key>ProgramArguments</key>
+    <array>
+        <string>/opt/homebrew/bin/python3</string>
+        <string>/Users/CHANGEME/code/sonto-todoist-sync/run.py</string>
+        <string>--once</string>
+    </array>
+
+    <key>WorkingDirectory</key>
+    <string>/Users/CHANGEME/code/sonto-todoist-sync</string>
+
+    <!-- every 15 minutes -->
+    <key>StartInterval</key>
+    <integer>900</integer>
+
+    <key>RunAtLoad</key>
+    <true/>
+
+    <key>StandardOutPath</key>
+    <string>/Users/CHANGEME/code/sonto-todoist-sync/logs/sync.out</string>
+    <key>StandardErrorPath</key>
+    <string>/Users/CHANGEME/code/sonto-todoist-sync/logs/sync.err</string>
+
+    <key>ProcessType</key>
+    <string>Background</string>
+</dict>
+</plist>

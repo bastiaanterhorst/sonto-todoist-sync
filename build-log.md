@@ -61,7 +61,18 @@ Recurring tasks: instances only (Todoist owns recurrence).
   tags→labels all correct. Completed tasks excluded (P4). **Current capability: a one-way,
   CREATE-only Sonto→Todoist mirror of structure + incomplete tasks, idempotent & safe to repeat.**
   Not yet: task UPDATES (P2b), reverse direction (P3), completion/deletes/recurring (P4).
-- P3 reverse + conflicts, P4 hard mappings (completion/deletes/recurring), P5 cron: not started.
+- **P2b/P3/P4 — two-way tasks: DONE & live & idempotent.** Unified reconcile state machine.
+  Forward (Sonto→Todoist): create/update/complete/delete. Reverse (Todoist→Sonto):
+  create/update/complete for tasks with a Sonto home (Todoist Inbox or mapped project/section).
+  Conflict = strict-LWW → Todoist-wins. Completion both ways (Todoist completed-items endpoint).
+  Verified live: forward+reverse settle to zero; a Todoist priority edit propagated to Sonto
+  `isImportant` and reverted. Phase = `twoway`, `ALLOW_SONTO_WRITES=True`.
+  - **Gated / deferred (documented):** deletes INTO Sonto (`ALLOW_SONTO_DELETES=False`);
+    reverse structure creation (Todoist-only projects → Sonto areas — those tasks are left in
+    Todoist, not dumped into Sonto Inbox); sub-task flattening; tags-on-projects/areas reverse
+    (Sonto has no create-tag MCP tool, so only existing tags are settable).
+- **P5 — launchd: documented, NOT installed** (per instruction). See README "Scheduling" +
+  `deploy/net.map-territory.sonto-todoist-sync.plist.example`.
 
 ## GOTCHA: Sonto entity IDs are per-read-unstable (must decode)
 
@@ -185,12 +196,32 @@ python run.py --status          # last run, token health, pending conflicts
 - Applied the structure correction to Todoist (Sonto is now a sub-project of M×T; 15 mapped).
 - **P2 task creates APPLIED** (user approved): 47 tasks created, idempotent re-run verified,
   Todoist state confirmed (60 total, week labels + Monday due correct, originals untouched).
-- NEXT: **P2b task UPDATES** (push Sonto edits to Todoist on `last_synced_hash` change — the
-  echo guard + `item_update`/`item_move`); then **P3** (reverse Todoist→Sonto + strict-LWW
-  conflicts via `updated_at` on the Todoist side, hash-diff on the Sonto side), **P4**
-  (completion two-way + `by_completion_date`, deletes with empty-read sanity floor,
-  recurring-as-instance, tags-on-projects/areas), **P5** (launchd 15-min job + `--status`).
-  Reminder: until P3, a Todoist-side add/edit does NOT flow back to Sonto.
+### 2026-06-26 (cont.) — P2b/P3/P4 two-way + P5 docs
+
+- Replaced the one-way task pass with a **unified two-way reconcile** (`_reconcile_tasks`):
+  classifies every id_map task pair + unmapped tasks into fwd/rev create/update/complete/delete
+  + conflict; applies forward live, reverse in `twoway` (gated by `ALLOW_SONTO_WRITES`).
+- **Echo-guard fixes** (were false-diffing every run): Todoist Inbox detected via `inbox_project`
+  (not `is_inbox_project`) and normalized to `"inbox"` on both sides; markdown links
+  `[title](url)` collapsed to `url` when hashing (Todoist auto-links bare URLs in descriptions).
+  After these, forward settles to 0 changes on re-run.
+- Completion: pull Todoist completed-items (`by_completion_date`) so a done task reads as
+  completed, not deleted. Empty-read sanity floor guards mass deletes both directions.
+- Reverse primitives validated on a throwaway task: `add_task` returns `{todo}` (uuid via
+  `extract_todo_uuid`), `edit_task`, `complete_task`, `delete_task` (needs
+  `confirm_destructive=true`, else the SSE read hangs).
+- **Reverse home filter**: only reverse-sync Todoist tasks in the Todoist Inbox or a mapped
+  project/section. The 13 pre-existing Privé/Stevinstraat tasks (unmapped projects) are left
+  in Todoist — avoids Inbox-dumping + a placement ping-pong.
+- Enabled `twoway` + `ALLOW_SONTO_WRITES`; reverse-created the 1 Todoist-Inbox task into Sonto
+  (correctly day-scheduled from its due date); verified a live Todoist→Sonto priority round-trip
+  and full idempotency.
+- **P5**: documented launchd setup in README + added `deploy/*.plist.example`; **did not install
+  the job** (per instruction).
+- Open/next (not blocking a working two-way sync): reverse structure creation; sub-task
+  flatten; tags on projects/areas reverse; enabling `ALLOW_SONTO_DELETES` after the
+  tombstone/sanity-floor paths get more real-world soak; switching reads to the incremental
+  Todoist `sync_token` (currently full-sync each run — fine at this scale).
 
 ### (superseded) earlier P2 note
 - NEXT: **P2 — tasks (one-way Sonto→Todoist).** For each Sonto task: content=name,
