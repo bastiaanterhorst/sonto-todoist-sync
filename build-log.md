@@ -48,11 +48,12 @@ Recurring tasks: instances only (Todoist owns recurrence).
 ## Phase status
 
 - **P0 — plumbing + introspection: COMPLETE.** Live introspection run; Todoist verified.
-- **P1 — one-way Sonto→Todoist structure: dry-run COMPLETE & verified live; apply pending.**
-  `python run.py --once --dry-run` reads the live Sonto structure + Todoist and prints the
-  mirror plan with no writes. Applying is gated: flip phase to `oneway_sonto_to_todoist` and
-  drop `--dry-run`. First live dry-run: 3 areas / 1 project / 11 groups -> 15 planned creates,
-  0 matches (empty-ish Todoist), correct nesting (groups -> sections under area/project).
+- **P1 — one-way Sonto→Todoist structure: APPLIED to real Todoist & idempotent.**
+  Phase set to `oneway_sonto_to_todoist`; `python run.py --once` created 4 projects + 11
+  sections. **Idempotency verified**: an immediate re-run = 15 matched / 0 creates / 0 applied.
+  Live Todoist now mirrors Sonto: M×T (4 sections), Personal (1), Sonto (6), Plans (empty);
+  pre-existing Inbox/Privé/Stevinstraat left untouched (one-way, no deletes). `--dry-run`
+  still previews; matching is name-within-parent so it re-discovers applied objects.
 - P2 tasks, P3 reverse + conflicts, P4 hard mappings, P5 cron: not started.
 
 ## Introspection findings (P0, 2026-06-26) — verified live
@@ -150,9 +151,13 @@ python run.py --status          # last run, token health, pending conflicts
   match within parent + ordered create plan with temp_ids), `reconcile` structure pass
   (dry-run report + gated batched apply via Todoist `project_add`/`section_add` with temp_ids,
   then id_map seeding + sync_token persisted in one transaction).
-- Verified live dry-run (see Phase status). No writes performed.
-- NEXT: **(a)** apply the structure (flip phase to `oneway_sonto_to_todoist`, drop `--dry-run`)
-  — first real write (~15 objects, easily reversible) — OR **(b)** build P2 (tasks) in dry-run
-  first so the full plan is reviewable before any write. Then P2: tasks (content, notes with
-  []/[x] subtask flatten, important→P1, day/week schedule, tag→label, Inbox), placed into the
-  mirrored structure; uses each todo's areaID/groupID/section linkage from the Sonto reads.
+- Verified live dry-run, then **APPLIED** (user chose "apply now"): 15 creates succeeded;
+  re-run proved idempotent (0 creates). Todoist structure confirmed via live read (7 projects /
+  16 sections incl. pre-existing). id_map seeded (in gitignored `data/sync.db`).
+- NEXT: **P2 — tasks (one-way Sonto→Todoist).** For each Sonto task: content=name,
+  notes (flatten any Todoist-only []/[x] later; for S→T just pass notes), important→priority,
+  day-schedule→`due.date`, week-schedule→`due` on locale-first-day + `sonto-week-YYYY-WW`
+  label, Inbox→Inbox, placement into the mirrored project/section using the todo's
+  areaID/projectID/groupID/section from Sonto reads (get_inbox/get_project/get_area/get_day/
+  get_week/search_todos). Then P3 reverse + conflicts, P4 tags/completion/deletes, P5 cron.
+  Note: completion + recurring-instance handling and tag→label come with P2/P4.
