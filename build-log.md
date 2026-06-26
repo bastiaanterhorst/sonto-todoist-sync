@@ -61,11 +61,13 @@ Recurring tasks: instances only (Todoist owns recurrence).
 | `syncer/transport.py` | done | stdlib HTTP helper, non-raising on 4xx/5xx |
 | `syncer/store.py` | done | SQLite: id_map/state/snapshot/applied_commands/run_lock |
 | `syncer/model.py` | done | `NormalizedEntity` + `canonical_hash` (echo guard) |
-| `syncer/mcp_client.py` | TODO | Sonto MCP: OAuth refresh + Streamable-HTTP JSON-RPC |
-| `syncer/todoist_client.py` | TODO | Todoist v1: /sync read, completed, batched writes |
-| `syncer/introspect.py` | TODO | P0 truth-finder: tools/list dump + sample payloads |
-| `syncer/main.py` | TODO | CLI entrypoint; run-lock; dry-run |
-| `syncer/sonto.py`, `mapping.py`, `reconcile.py`, `adopt.py` | TODO | stubs first |
+| `syncer/mcp_client.py` | done | OAuth refresh + Streamable-HTTP JSON-RPC (JSON+SSE), session, re-init |
+| `syncer/todoist_client.py` | done | /sync read, completed read, batched writes (uuid/temp_id) |
+| `syncer/introspect.py` | done | P0 truth-finder: tools/list dump + read-only sample payloads |
+| `syncer/main.py`, `__main__.py`, `run.py` | done | CLI: --introspect/--once/--status/--set-phase, run-lock |
+| `syncer/mapping.py` | partial | week + priority helpers done; entity translation = P1+ |
+| `syncer/sonto.py` | partial | read wrappers done; write methods = P1+ |
+| `syncer/reconcile.py`, `adopt.py` | stub | engine + adopt land P1+ (documented skeletons) |
 
 ## How to run (target)
 
@@ -83,5 +85,22 @@ python run.py --status          # last run, token health, pending conflicts
 - Wrote `config.py` (incl. locale-aware first-day-of-week: macOS `AppleFirstWeekday` →
   glibc `FIRST_WEEKDAY` → region heuristic → Monday; env override `SYNC_WEEK_FIRST_DAY`),
   `transport.py`, `store.py` (full schema), `model.py` (canonical hashing).
-- NEXT: `mcp_client.py` (OAuth refresh + MCP transport), `todoist_client.py`, `introspect.py`,
-  `main.py`, then run `--introspect` against the live MCP to resolve the unknown tool schemas.
+- Wrote `mcp_client.py` (OAuth `refresh_token` grant + atomic locked token rewrite; MCP
+  Streamable-HTTP: initialize → notifications/initialized → tools/list → tools/call; handles
+  `application/json` and `text/event-stream`; 401 → refresh+retry; `invalid_grant` →
+  `NeedsRepair`), `todoist_client.py` (API v1 `/sync` read + batched command writes with
+  `uuid`/`temp_id` + completed-by-completion-date), `introspect.py` (read-only tool-schema
+  dump + sample payloads → `data/sonto-tools.json`), `mapping.py` (week label/due-date +
+  priority helpers), `sonto.py` (read wrappers), `main.py`/`run.py` CLI, and `reconcile.py`/
+  `adopt.py` documented skeletons.
+- Smoke tests pass: compile + imports clean; week_due_date(Fri 2026-06-26)=Mon 2026-06-22;
+  `--status` reads token health (confirms **Sonto token expired → will refresh**, **Todoist
+  token missing**). No live network calls or token mutation performed yet.
+- **BLOCKED on two human-gated inputs before live `--introspect`/`--once`:**
+  1. A **Todoist API token** (`.secrets/todoist-token.json` or `TODOIST_API_TOKEN`).
+  2. OK to **refresh the Sonto MCP token live** — the access token is expired, so the first
+     real call performs an OAuth `refresh_token` against `127.0.0.1:2402/oauth/token` and
+     rewrites the shared `mcpb_proxy_tokens.json` (also used by Claude Desktop). Behaviour is
+     standard OAuth refresh, but it mutates a shared file — confirm before running.
+- NEXT (P0 finish): run `python run.py --introspect` live to capture real Sonto tool schemas
+  (resolves: per-item timestamp? id format? tag tools? add_task arg shape?) → then P1.
