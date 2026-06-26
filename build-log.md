@@ -241,6 +241,21 @@ python run.py --status          # last run, token health, pending conflicts
   currently makes ALL top-level Todoist-only projects Areas-or-Projects by hierarchy; it does
   not (yet) reconsider an existing Sonto kind if the Todoist hierarchy later changes.
 
+### 2026-06-26 (cont.) — deletes on + loose ends + README slim
+
+- **Deletes into Sonto ON by default** (`ALLOW_SONTO_DELETES=True`). Guarded: `_fetch_completed`
+  now returns `(items, ok)`; if the Todoist completed-items read fails, `rev_delete` is
+  suppressed that run so a completed task is never misread as deleted (plus the empty-read floor).
+  Verified live: a Todoist delete round-trips to a Sonto delete (task removed, map tombstoned,
+  idempotent).
+- **Loose end fixed**: forward update now moves a task to the Todoist **Inbox** when it becomes
+  uncontained in Sonto (`_forward_update_tasks` takes `inbox_id`; Sonto Inbox → Todoist Inbox).
+- **Known remaining edge (documented, not a bug)**: Todoist → Sonto *re-filing* (moving a task
+  between containers) updates fields but doesn't move the Sonto task; sub-task flatten and
+  project/area tag reverse still out of scope. Listed in the README warning.
+- **README simplified** to: what it is · setup · manual usage · launchd · the 1:1 warning.
+  Removed Scope/Status/Layout/bootstrap-ladder detail (still in docs/PLAN.md + build-log).
+
 ### (superseded) earlier P2 note
 - NEXT: **P2 — tasks (one-way Sonto→Todoist).** For each Sonto task: content=name,
   notes (flatten any Todoist-only []/[x] later; for S→T just pass notes), important→priority,

@@ -86,8 +86,10 @@ TODOIST_PRIORITY_NORMAL = 1
 # expose a reliable per-item timestamp (resolved at introspection), fall back to this side.
 LWW_FALLBACK_WINNER = "todoist"  # "todoist" | "sonto"
 
-# Safety: deleting from the user's real planner is the highest-blast-radius action.
-ALLOW_SONTO_DELETES = False
+# Propagate Todoist deletions into Sonto. Guarded: deletes are suppressed if the Todoist
+# completed-items fetch failed (a completed task must not be misread as deleted) and by the
+# empty-read sanity floor.
+ALLOW_SONTO_DELETES = True
 
 # Reverse writes (Todoist -> Sonto: create/edit/complete tasks in the planner) — required for
 # genuine two-way sync, so ON in the `twoway` phase. Only tasks with a real Sonto home are

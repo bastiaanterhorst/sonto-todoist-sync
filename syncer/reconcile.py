@@ -137,7 +137,8 @@ def _reconcile_tasks(store, sonto, todoist, struct, td, inbox_id, *, dry_run, ph
         canon = mapping.todoist_task_canonical(i, inbox_id)
         t_by_id[i["id"]] = {"item": i, "completed": False, "canon": canon,
                             "hash": canonical_hash(canon)}
-    for ci in _fetch_completed(todoist):
+    completed_items, completed_ok = _fetch_completed(todoist)
+    for ci in completed_items:
         cid = ci.get("id") or ci.get("task_id") or ci.get("v2_task_id")
         if cid and cid not in t_by_id:
             t_by_id[cid] = {"item": ci, "completed": True, "canon": None, "hash": None}
@@ -160,12 +161,18 @@ def _reconcile_tasks(store, sonto, todoist, struct, td, inbox_id, *, dry_run, ph
                 and _td_task_has_sonto_home(store, t["item"], inbox_id)):
             B["rev_create"].append(t)
 
+    # Never delete from Sonto on an incomplete Todoist picture (completed-fetch failed).
+    if not completed_ok and B["rev_delete"]:
+        log.warning("suppressing %d Sonto deletes — completed-tasks fetch was incomplete",
+                    len(B["rev_delete"]))
+        B["rev_delete"] = []
+
     _report_tasks(B, len(s_by_uuid), len(t_by_id), will_forward, will_reverse, will_sonto_delete)
 
     applied = {}
     if will_forward:
         applied["fwd_create"] = _forward_create_tasks(store, todoist, B["fwd_create"])
-        applied["fwd_update"] = _forward_update_tasks(store, todoist, B["fwd_update"])
+        applied["fwd_update"] = _forward_update_tasks(store, todoist, B["fwd_update"], inbox_id)
         applied["fwd_complete"] = _forward_complete_tasks(store, todoist, B["fwd_complete"])
         applied["fwd_delete"] = _forward_delete_tasks(store, todoist, B["fwd_delete"], len(s_by_uuid))
     if will_reverse:
@@ -211,9 +218,10 @@ def _td_task_syncable(item: dict) -> bool:
     return True
 
 
-def _fetch_completed(todoist) -> list:
+def _fetch_completed(todoist):
     """Recently-completed Todoist tasks (so mapped completions read as 'done', not 'deleted').
-    Defensive: any failure degrades gracefully to no completion info."""
+    Returns (items, ok); ok=False if the fetch errored — callers must then NOT delete from Sonto
+    (a completed task could otherwise be misread as deleted)."""
     import datetime as dt
     today = dt.date.today()
     since = (today - dt.timedelta(days=89)).isoformat() + "T00:00:00Z"
@@ -226,9 +234,10 @@ def _fetch_completed(todoist) -> list:
             cursor = resp.get("next_cursor")
             if not cursor:
                 break
+        return out, True
     except Exception as e:  # noqa: BLE001
-        log.warning("completed-tasks fetch failed (%s); completion detection degraded", e)
-    return out
+        log.warning("completed-tasks fetch failed (%s); suppressing Sonto deletes this run", e)
+        return out, False
 
 
 def _report_tasks(B, n_sonto, n_todoist, will_forward, will_reverse, will_sonto_delete) -> None:
@@ -277,7 +286,7 @@ def _forward_create_tasks(store, todoist, creates) -> int:
     return applied
 
 
-def _forward_update_tasks(store, todoist, pairs) -> int:
+def _forward_update_tasks(store, todoist, pairs, inbox_id) -> int:
     if not pairs:
         return 0
     now, applied = _now_iso(), 0
@@ -287,14 +296,15 @@ def _forward_update_tasks(store, todoist, pairs) -> int:
             item = t["item"]
             args = mapping.task_update_args(s["task"]); args["id"] = item["id"]
             cmds.append(todoist.command("item_update", args))
-            want_proj, want_sec = s["project"], s["section"]
+            want_sec = s["section"]
+            target_proj = s["project"] or inbox_id   # Sonto Inbox -> Todoist Inbox
             cur_proj, cur_sec = item.get("project_id"), item.get("section_id")
-            if (want_sec and want_sec != cur_sec) or (not want_sec and want_proj and want_proj != cur_proj):
+            if (want_sec and want_sec != cur_sec) or (not want_sec and target_proj and target_proj != cur_proj):
                 mv = {"id": item["id"]}
                 if want_sec:
                     mv["section_id"] = want_sec
-                elif want_proj:
-                    mv["project_id"] = want_proj
+                else:
+                    mv["project_id"] = target_proj
                 cmds.append(todoist.command("item_move", mv))
             meta.append((row, s))
         resp = todoist.apply_commands(cmds)
