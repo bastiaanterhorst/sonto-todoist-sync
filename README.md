@@ -1,6 +1,6 @@
 # sonto-todoist-sync
 
-Two-way sync between **Sonto** (a goal & life planner Mac app — formerly "Space") and
+Two-way sync between [**Sonto**](https://apps.apple.com/us/app/space-goal-life-planner/id6502294348) (a goal & life planner for Mac and iOS) and
 **Todoist**, designed to run every 15 minutes and keep both as close to identical as possible.
 Zero runtime dependencies — standard library only (Python 3.11+); no venv or pip.
 
