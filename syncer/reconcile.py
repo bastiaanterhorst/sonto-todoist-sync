@@ -148,7 +148,8 @@ def _reconcile_tasks(store, sonto, todoist, struct, td, inbox_id, *, dry_run, ph
         if u not in mapped_s and not s["completed"]:
             B["fwd_create"].append(s)
     for i, t in t_by_id.items():
-        if i not in mapped_t and not t["completed"] and _td_task_syncable(t["item"]):
+        if (i not in mapped_t and not t["completed"] and _td_task_syncable(t["item"])
+                and _td_task_has_sonto_home(store, t["item"], inbox_id)):
             B["rev_create"].append(t)
 
     _report_tasks(B, len(s_by_uuid), len(t_by_id), will_forward, will_reverse, will_sonto_delete)
@@ -161,7 +162,7 @@ def _reconcile_tasks(store, sonto, todoist, struct, td, inbox_id, *, dry_run, ph
         applied["fwd_delete"] = _forward_delete_tasks(store, todoist, B["fwd_delete"], len(s_by_uuid))
     if will_reverse:
         applied["rev_update"] = _reverse_update_tasks(store, sonto, struct, B["rev_update"] + B["conflict"])
-        applied["rev_create"] = _reverse_create_tasks(store, sonto, struct, B["rev_create"])
+        applied["rev_create"] = _reverse_create_tasks(store, sonto, struct, B["rev_create"], inbox_id)
         applied["rev_complete"] = _reverse_complete_tasks(store, sonto, B["rev_complete"])
     if will_sonto_delete:
         applied["rev_delete"] = _reverse_delete_tasks(store, sonto, B["rev_delete"], len(t_by_id))
@@ -349,8 +350,23 @@ def _group_parent_index(struct: dict) -> dict:
     return out
 
 
-def _sonto_placement_for_todoist(store, raw, group_parent, item) -> dict:
-    """add_task placement kwargs (context_type + ids, raw Sonto tokens) for a Todoist item."""
+def _td_task_has_sonto_home(store, item, inbox_id) -> bool:
+    """True if a Todoist task maps to a Sonto location (mapped section/project/area, or the
+    Todoist Inbox -> Sonto Inbox). Tasks in unmapped Todoist-only projects have no home and are
+    NOT reverse-synced (avoids dumping them into Sonto Inbox + a placement ping-pong)."""
+    sec = item.get("section_id")
+    if sec and store.map_by_todoist(EntityType.GROUP, sec):
+        return True
+    proj = item.get("project_id")
+    if not proj or proj == inbox_id:
+        return True
+    return bool(store.map_by_todoist(EntityType.PROJECT, proj)
+                or store.map_by_todoist(EntityType.AREA, proj))
+
+
+def _sonto_placement_for_todoist(store, raw, group_parent, item, inbox_id) -> dict | None:
+    """add_task placement kwargs (context_type + raw Sonto tokens) for a Todoist item, or None
+    if it has no Sonto home (caller skips)."""
     sec = item.get("section_id")
     if sec:
         gm = store.map_by_todoist(EntityType.GROUP, sec)
@@ -359,17 +375,18 @@ def _sonto_placement_for_todoist(store, raw, group_parent, item) -> dict:
             if raw.get(pstable):
                 return {"context_type": kind, f"{kind}_id": raw[pstable], "group_id": raw[gm.sonto_id]}
     proj = item.get("project_id")
-    if proj:
+    if proj and proj != inbox_id:
         pm = store.map_by_todoist(EntityType.PROJECT, proj)
         if pm and raw.get(pm.sonto_id):
             return {"context_type": "project", "project_id": raw[pm.sonto_id]}
         am = store.map_by_todoist(EntityType.AREA, proj)
         if am and raw.get(am.sonto_id):
             return {"context_type": "area", "area_id": raw[am.sonto_id]}
+        return None  # unmapped non-inbox project -> no Sonto home
     return {"context_type": "inbox"}
 
 
-def _reverse_create_tasks(store, sonto, struct, metas) -> int:
+def _reverse_create_tasks(store, sonto, struct, metas, inbox_id) -> int:
     if not metas:
         return 0
     raw = sonto_mod.Sonto.raw_index(struct)
@@ -378,7 +395,10 @@ def _reverse_create_tasks(store, sonto, struct, metas) -> int:
     now, applied = _now_iso(), 0
     for m in metas:
         item = m["item"]
-        add_args = {"name": item.get("content") or "", **_sonto_placement_for_todoist(store, raw, gp, item)}
+        placement = _sonto_placement_for_todoist(store, raw, gp, item, inbox_id)
+        if placement is None:
+            continue  # no Sonto home -> skip
+        add_args = {"name": item.get("content") or "", **placement}
         if item.get("description"):
             add_args["notes"] = item["description"]
         try:

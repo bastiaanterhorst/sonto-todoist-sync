@@ -217,7 +217,8 @@ class Sonto:
         return self.edit_task(todo_uuid=todo_uuid, completed=True)
 
     def delete_task(self, todo_uuid: str) -> dict:
-        return self.parse(self._call("delete_task", {"todo_uuid": todo_uuid}))
+        return self.parse(self._call(
+            "delete_task", {"todo_uuid": todo_uuid, "confirm_destructive": True}))
 
     def add_project(self, **args) -> dict:
         return self.parse(self._call("add_project", args))
