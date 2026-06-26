@@ -53,10 +53,40 @@ def week_label_for_date(ref_date: _dt.date) -> str:
     return week_label(iso.year, iso.week)
 
 
-# --- Entity translation (built out in later phases) -------------------------
+# --- Structure: canonical projections + Todoist create args (P1) ------------
+# Sonto Area  -> Todoist top-level project
+# Sonto Project (in area) -> Todoist sub-project (parent = area's project)
+# Sonto Project (area-less) -> Todoist top-level project
+# Sonto Group -> Todoist section (in the project's Todoist project)
 
-def sonto_to_todoist(entity):  # pragma: no cover - P1+
-    raise NotImplementedError("Entity translation lands in P1-P4; see docs/PLAN.md")
+def area_canonical(area: dict) -> dict:
+    return {"name": (area.get("name") or "").strip()}
+
+
+def project_canonical(project: dict, area_name: str | None) -> dict:
+    return {"name": (project.get("name") or "").strip(), "area": (area_name or "").strip()}
+
+
+def group_canonical(group: dict, parent_name: str | None) -> dict:
+    return {"name": (group.get("name") or "").strip(), "parent": (parent_name or "").strip()}
+
+
+def todoist_project_args(name: str, parent: str | None = None) -> dict:
+    """`parent` is a Todoist project id or a temp_id (for a parent created same batch)."""
+    args = {"name": name}
+    if parent:
+        args["parent_id"] = parent
+    return args
+
+
+def todoist_section_args(name: str, project: str) -> dict:
+    return {"name": name, "project_id": project}
+
+
+# --- Full entity translation (tasks etc. land in P2+) -----------------------
+
+def sonto_to_todoist(entity):  # pragma: no cover - P2+
+    raise NotImplementedError("Task translation lands in P2+; see docs/PLAN.md")
 
 
 def todoist_to_sonto(entity):  # pragma: no cover - P1+

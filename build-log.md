@@ -48,7 +48,11 @@ Recurring tasks: instances only (Todoist owns recurrence).
 ## Phase status
 
 - **P0 — plumbing + introspection: COMPLETE.** Live introspection run; Todoist verified.
-- **P1 — one-way Sonto→Todoist structure: NEXT.**
+- **P1 — one-way Sonto→Todoist structure: dry-run COMPLETE & verified live; apply pending.**
+  `python run.py --once --dry-run` reads the live Sonto structure + Todoist and prints the
+  mirror plan with no writes. Applying is gated: flip phase to `oneway_sonto_to_todoist` and
+  drop `--dry-run`. First live dry-run: 3 areas / 1 project / 11 groups -> 15 planned creates,
+  0 matches (empty-ish Todoist), correct nesting (groups -> sections under area/project).
 - P2 tasks, P3 reverse + conflicts, P4 hard mappings, P5 cron: not started.
 
 ## Introspection findings (P0, 2026-06-26) — verified live
@@ -96,9 +100,10 @@ Server `Space - Life Planner` v1.6.1; **36 tools**. Full schemas committed at
 | `syncer/todoist_client.py` | done | /sync read, completed read, batched writes (uuid/temp_id) |
 | `syncer/introspect.py` | done | P0 truth-finder: tools/list dump + read-only sample payloads |
 | `syncer/main.py`, `__main__.py`, `run.py` | done | CLI: --introspect/--once/--status/--set-phase, run-lock |
-| `syncer/mapping.py` | partial | week + priority helpers done; entity translation = P1+ |
-| `syncer/sonto.py` | partial | read wrappers done; write methods = P1+ |
-| `syncer/reconcile.py`, `adopt.py` | stub | engine + adopt land P1+ (documented skeletons) |
+| `syncer/mapping.py` | partial | week/priority + structure helpers done; task translation = P2+ |
+| `syncer/sonto.py` | partial | reads + `snapshot_structure()` done; task writes = P2+ |
+| `syncer/adopt.py` | done (P1) | name-based structure matcher + ordered create plan (temp_ids) |
+| `syncer/reconcile.py` | partial | P1 structure pass (dry-run + gated apply) done; tasks = P2+ |
 
 ## How to run (target)
 
@@ -138,7 +143,16 @@ python run.py --status          # last run, token health, pending conflicts
   "Introspection findings" above. Verified Todoist token (real account: 3 projects, 5 sections,
   13 tasks, 1 label) and confirmed `updated_at`/`due`/`deadline`/`labels` item fields.
 - **P0 complete.** All design unknowns resolved.
-- NEXT (P1): one-way Sonto→Todoist structure mirror — areas→top projects,
-  projects→sub-projects, groups→sections — with the `adopt` match pass. **Decision needed
-  before writing to Todoist: test target.** The provided token is the REAL Todoist account;
-  per the plan, P1–P4 should be exercised against a scratch project/account first.
+- Decision: write target = **dry-run on real account, then careful apply via the bootstrap
+  ladder** (no scratch account).
+- Built **P1 structure mirror**: `sonto.snapshot_structure()` (areas, non-plan projects with
+  area linkage, groups), `mapping` structure helpers, `adopt.match_structure()` (name-based
+  match within parent + ordered create plan with temp_ids), `reconcile` structure pass
+  (dry-run report + gated batched apply via Todoist `project_add`/`section_add` with temp_ids,
+  then id_map seeding + sync_token persisted in one transaction).
+- Verified live dry-run (see Phase status). No writes performed.
+- NEXT: **(a)** apply the structure (flip phase to `oneway_sonto_to_todoist`, drop `--dry-run`)
+  — first real write (~15 objects, easily reversible) — OR **(b)** build P2 (tasks) in dry-run
+  first so the full plan is reviewable before any write. Then P2: tasks (content, notes with
+  []/[x] subtask flatten, important→P1, day/week schedule, tag→label, Inbox), placed into the
+  mirrored structure; uses each todo's areaID/groupID/section linkage from the Sonto reads.
