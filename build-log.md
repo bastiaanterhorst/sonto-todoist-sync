@@ -54,11 +54,13 @@ Recurring tasks: instances only (Todoist owns recurrence).
   Live Todoist now mirrors Sonto: M×T (4 sections), Personal (1), Sonto (6), Plans (empty);
   pre-existing Inbox/Privé/Stevinstraat left untouched (one-way, no deletes). `--dry-run`
   still previews; matching is name-within-parent so it re-discovers applied objects.
-- **P2 — tasks (one-way Sonto→Todoist): dry-run COMPLETE & verified; apply pending review.**
-  47 incomplete tasks place correctly: 25 in sections, 2 in project-root, 20 Inbox (genuine
-  inbox + purely-scheduled). Day→`due.date`, week→locale-first-day `due` + `sonto-week-YYYY-WW`
-  label (verified: week task due 2026-06-22 Mon + label `sonto-week-2026-W26`), important→P1,
-  notes→description, tags→labels. Completed tasks (47) excluded (P4). Tasks NOT yet applied.
+- **P2 — tasks (one-way Sonto→Todoist): APPLIED to real Todoist & idempotent.**
+  Created 47 incomplete tasks (25 sections / 2 project-root / 20 Inbox). Re-run = 0 creates.
+  Verified live: 60 tasks total (13 pre-existing untouched + 47 new), 22 with due dates, the 4
+  week tasks carry `sonto-week-2026-W26` + due Mon 2026-06-22. important→P1, notes→description,
+  tags→labels all correct. Completed tasks excluded (P4). **Current capability: a one-way,
+  CREATE-only Sonto→Todoist mirror of structure + incomplete tasks, idempotent & safe to repeat.**
+  Not yet: task UPDATES (P2b), reverse direction (P3), completion/deletes/recurring (P4).
 - P3 reverse + conflicts, P4 hard mappings (completion/deletes/recurring), P5 cron: not started.
 
 ## GOTCHA: Sonto entity IDs are per-read-unstable (must decode)
@@ -181,11 +183,14 @@ python run.py --status          # last run, token health, pending conflicts
   map, added `project_move` handling for the Sonto-under-M×T correction. Refactored structure
   apply into `_seed_matched` (always; non-destructive) + `_create_structure` + `_apply_moves`.
 - Applied the structure correction to Todoist (Sonto is now a sub-project of M×T; 15 mapped).
-- **P2 task dry-run verified correct** (placement/schedule/labels). Tasks NOT yet written —
-  awaiting review before applying the 47 `item_add`s.
-- NEXT: on approval, apply P2 task creates; then P2b task UPDATES (push Sonto edits to Todoist
-  on hash change); then P3 (reverse Todoist→Sonto + strict-LWW conflicts), P4
-  (completion/deletes/recurring-instance/tags-on-projects), P5 (launchd cron).
+- **P2 task creates APPLIED** (user approved): 47 tasks created, idempotent re-run verified,
+  Todoist state confirmed (60 total, week labels + Monday due correct, originals untouched).
+- NEXT: **P2b task UPDATES** (push Sonto edits to Todoist on `last_synced_hash` change — the
+  echo guard + `item_update`/`item_move`); then **P3** (reverse Todoist→Sonto + strict-LWW
+  conflicts via `updated_at` on the Todoist side, hash-diff on the Sonto side), **P4**
+  (completion two-way + `by_completion_date`, deletes with empty-read sanity floor,
+  recurring-as-instance, tags-on-projects/areas), **P5** (launchd 15-min job + `--status`).
+  Reminder: until P3, a Todoist-side add/edit does NOT flow back to Sonto.
 
 ### (superseded) earlier P2 note
 - NEXT: **P2 — tasks (one-way Sonto→Todoist).** For each Sonto task: content=name,
