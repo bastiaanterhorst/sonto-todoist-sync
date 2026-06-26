@@ -47,8 +47,38 @@ Recurring tasks: instances only (Todoist owns recurrence).
 
 ## Phase status
 
-- **P0 — plumbing + introspection: IN PROGRESS.**
-- P1 one-way structure, P2 tasks, P3 reverse + conflicts, P4 hard mappings, P5 cron: not started.
+- **P0 — plumbing + introspection: COMPLETE.** Live introspection run; Todoist verified.
+- **P1 — one-way Sonto→Todoist structure: NEXT.**
+- P2 tasks, P3 reverse + conflicts, P4 hard mappings, P5 cron: not started.
+
+## Introspection findings (P0, 2026-06-26) — verified live
+
+Server `Space - Life Planner` v1.6.1; **36 tools**. Full schemas committed at
+`docs/sonto-mcp-tools.md`; full dump incl. real sample data is in gitignored
+`data/sonto-tools.json`. Key facts the engine relies on:
+
+- **IDs**: tasks → clean `todoUUID` (e.g. `41F182E3-...`); areas/projects → opaque base64
+  Core-Data tokens (`areaID`/`projectID`); tags → tag UUIDs. All stable; use as map keys.
+- **Scheduling (on `add_task`/`edit_task`)**: day → `scheduled_day_iso`/`day_iso` (YYYY-MM-DD);
+  week → `scheduled_week` + `scheduled_week_year` (ISO week); `unschedule` clears. Confirms the
+  granularity ladder and how to set it. `add_task` needs `context_type`
+  (inbox/day/week/project/area) + `name`.
+- **Tags are first-class**: `list_tags`, `get_tag_todos`, and `set_tags`/`add_tags`/`remove_tags`
+  (tag UUIDs) on task/project/area tools. So task↔label sync is fully supported; project/area
+  tags exist too (still no Todoist home → Sonto-only).
+- **Sub-tasks**: `notes` is markdown where `[]`/`[x]` are (completed) sub-task checklist items —
+  exactly the flatten target for Todoist sub-tasks. `*italic*`/`**bold**` supported.
+- **NO per-item modified timestamp** on Sonto tasks (fields: completed, hasLinkedEvent,
+  inProgress, isImportant, isLate, name, notes, projectIsPlan, section, tags, todoUUID).
+  → strict-LWW uses the **Todoist-wins fallback** on both-changed conflicts (`config
+  .LWW_FALLBACK_WINNER="todoist"`). Sonto-side change detection = hash-diff vs snapshot.
+- **`list_groups`/`get_project`/`get_area` need a parent id** (not global). `list_projects`
+  takes optional `area_id`/`include_completed`. Projects carry **`isPlan`** (yearly/quarterly
+  plans) → exclude plans from sync.
+- **Todoist** verified: token valid; full sync returns sync_token + items with `updated_at`,
+  `due`, `deadline`, `priority`, `labels`, `parent_id`, `project_id`, `section_id`, `checked`,
+  `completed_at`, `is_deleted`. (Todoist `deadline` is task-level; Sonto has no per-task
+  deadline → drop on the Sonto side.)
 
 ## File status
 
@@ -56,6 +86,7 @@ Recurring tasks: instances only (Todoist owns recurrence).
 |---|---|---|
 | `.gitignore`, `README.md` | done | secrets/data/logs ignored |
 | `docs/PLAN.md` | done | full design (in-repo copy) |
+| `docs/sonto-mcp-tools.md` | done | real MCP tool schemas (from live introspection; no personal data) |
 | `build-log.md` | done | this file; keep updated |
 | `syncer/config.py` | done | paths, endpoints, policy flags, `locale_first_weekday()` |
 | `syncer/transport.py` | done | stdlib HTTP helper, non-raising on 4xx/5xx |
@@ -102,5 +133,12 @@ python run.py --status          # last run, token health, pending conflicts
      real call performs an OAuth `refresh_token` against `127.0.0.1:2402/oauth/token` and
      rewrites the shared `mcpb_proxy_tokens.json` (also used by Claude Desktop). Behaviour is
      standard OAuth refresh, but it mutates a shared file — confirm before running.
-- NEXT (P0 finish): run `python run.py --introspect` live to capture real Sonto tool schemas
-  (resolves: per-item timestamp? id format? tag tools? add_task arg shape?) → then P1.
+- Ran `python run.py --introspect` live (token refreshed OK). Captured 36 real tools +
+  schemas → `docs/sonto-mcp-tools.md`; samples → gitignored `data/sonto-tools.json`. See
+  "Introspection findings" above. Verified Todoist token (real account: 3 projects, 5 sections,
+  13 tasks, 1 label) and confirmed `updated_at`/`due`/`deadline`/`labels` item fields.
+- **P0 complete.** All design unknowns resolved.
+- NEXT (P1): one-way Sonto→Todoist structure mirror — areas→top projects,
+  projects→sub-projects, groups→sections — with the `adopt` match pass. **Decision needed
+  before writing to Todoist: test target.** The provided token is the REAL Todoist account;
+  per the plan, P1–P4 should be exercised against a scratch project/account first.
