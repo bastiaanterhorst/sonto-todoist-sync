@@ -1,0 +1,21 @@
+# Secrets — never commit
+.secrets/
+
+# Local state / database
+data/
+*.db
+*.db-wal
+*.db-shm
+
+# Logs
+*.log
+logs/
+
+# Python
+__pycache__/
+*.pyc
+.venv/
+venv/
+
+# macOS
+.DS_Store
