@@ -89,6 +89,11 @@ LWW_FALLBACK_WINNER = "todoist"  # "todoist" | "sonto"
 # Safety: deleting from the user's real planner is the highest-blast-radius action.
 ALLOW_SONTO_DELETES = False
 
+# Safety: reverse writes (Todoist -> Sonto, creating/editing tasks in the real planner) stay
+# OFF until explicitly enabled, even in the `twoway` phase. Until then the reverse direction is
+# detected and reported (dry-run) but never applied to Sonto.
+ALLOW_SONTO_WRITES = False
+
 # Only learn/sync date-ladder placement within a rolling horizon (cheap + low-churn).
 # Filed tasks are read fully from their container; purely-scheduled tasks (no project/area)
 # are discovered from get_day/get_week over this horizon. Overdue day tasks are caught via

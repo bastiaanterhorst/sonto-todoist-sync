@@ -8,8 +8,18 @@ schemas. See docs/PLAN.md for the mapping tables.
 from __future__ import annotations
 
 import datetime as _dt
+import re as _re
 
 from . import config
+
+# Todoist auto-converts a bare URL in a description into a `[title](url)` markdown link. To stop
+# that from registering as an endless change vs Sonto's bare URL, collapse `[text](url)` -> url
+# when hashing (the WRITE path still sends raw notes; this only affects change detection).
+_MD_LINK = _re.compile(r"\[[^\]]*\]\((https?://[^)\s]+)\)")
+
+
+def normalize_notes(text: str | None) -> str:
+    return _MD_LINK.sub(r"\1", (text or "").strip())
 
 # --- Priority: Sonto `important` boolean <-> Todoist 1..4 (4 = P1/highest) ---
 
@@ -148,13 +158,73 @@ def task_canonical(task: dict, project_ref: str | None, section_ref: str | None)
     due, labels = task_due_and_labels(task)
     return {
         "content": (task.get("name") or "").strip(),
-        "notes": (task.get("notes") or "").strip(),
+        "notes": normalize_notes(task.get("notes")),
         "important": bool(task.get("isImportant")),
         "due": (due or {}).get("date", ""),
         "labels": labels,
         "project": project_ref or "inbox",
         "section": section_ref or "",
     }
+
+
+def task_update_args(task: dict) -> dict:
+    """item_update args for a Sonto task — includes explicit clears (due=None, labels=[],
+    description="") so removals propagate. `id` and placement (item_move) are set by the caller."""
+    due, labels = task_due_and_labels(task)
+    return {
+        "content": (task.get("name") or "").strip(),
+        "description": task.get("notes") or "",
+        "priority": important_to_priority(bool(task.get("isImportant"))),
+        "due": due,            # None clears the due
+        "labels": labels,      # [] clears labels
+    }
+
+
+# --- Todoist -> canonical (for change detection) and Todoist -> Sonto (reverse writes) -------
+
+def todoist_task_canonical(item: dict, inbox_project_id: str | None = None) -> dict:
+    """Project an active/completed Todoist item into the SAME canonical shape as a Sonto task,
+    so the two hashes are directly comparable."""
+    due = (item.get("due") or {})
+    due_date = (due.get("date") or "")[:10]
+    proj = item.get("project_id")
+    if inbox_project_id and proj == inbox_project_id:
+        proj = "inbox"
+    return {
+        "content": (item.get("content") or "").strip(),
+        "notes": normalize_notes(item.get("description")),
+        "important": priority_to_important(item.get("priority", 1)),
+        "due": due_date,
+        "labels": normalize_tags(item.get("labels")),
+        "project": proj or "inbox",
+        "section": item.get("section_id") or "",
+    }
+
+
+def todoist_schedule_to_sonto(item: dict) -> dict:
+    """edit_task / add_task scheduling kwargs from a Todoist item's due + week-marker label."""
+    for label in item.get("labels") or []:
+        wk = parse_week_label(str(label))
+        if wk:
+            return {"scheduled_week": wk[1], "scheduled_week_year": wk[0]}
+    due = (item.get("due") or {}).get("date")
+    if due:
+        return {"scheduled_day_iso": due[:10]}
+    return {"unschedule": True}
+
+
+def todoist_labels_to_tag_uuids(labels, tag_name_to_uuid: dict) -> list[str]:
+    """Map Todoist label names back to Sonto tag UUIDs, dropping the internal week marker and
+    any label that has no matching Sonto tag (Sonto has no create-tag MCP tool)."""
+    out = []
+    for label in labels or []:
+        s = str(label)
+        if s.startswith(config.WEEK_LABEL_PREFIX):
+            continue
+        u = tag_name_to_uuid.get(s)
+        if u:
+            out.append(u)
+    return out
 
 
 def todoist_to_sonto(entity):  # pragma: no cover - P1+

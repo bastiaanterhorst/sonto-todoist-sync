@@ -40,7 +40,8 @@ def match_structure(sonto: dict, td_projects: list[dict], td_sections: list[dict
         return f"tmp_{counter[0]}"
 
     # Index Todoist side.
-    inbox_ids = {p["id"] for p in td_projects if p.get("is_inbox_project")}
+    inbox_ids = {p["id"] for p in td_projects
+                 if p.get("inbox_project") or p.get("is_inbox_project")}
     top_by_name: dict[str, dict] = {}
     sub_by_parent_name: dict[tuple[str, str], dict] = {}
     for p in td_projects:

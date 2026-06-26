@@ -130,19 +130,34 @@ class Sonto:
         for a in areas:
             sa = stable_id(a["areaID"])
             for g in self.groups_in_area(a["areaID"]):
-                groups.append({"id": stable_id(g["groupID"]), "name": g["name"],
-                               "area_id": sa, "project_id": None})
+                groups.append({"id": stable_id(g["groupID"]), "raw": g["groupID"],
+                               "name": g["name"], "area_id": sa, "project_id": None})
         for p in projects:
             for g in self.groups_in_project(p["raw"]):
-                groups.append({"id": stable_id(g["groupID"]), "name": g["name"],
-                               "project_id": p["id"], "area_id": None})
+                groups.append({"id": stable_id(g["groupID"]), "raw": g["groupID"],
+                               "name": g["name"], "project_id": p["id"], "area_id": None})
 
         return {
-            "areas": [{"id": stable_id(a["areaID"]), "name": a["name"], "emoji": a.get("emoji", ""),
-                       "notes": a.get("notes", ""), "tags": a.get("tags", [])} for a in areas],
+            "areas": [{"id": stable_id(a["areaID"]), "raw": a["areaID"], "name": a["name"],
+                       "emoji": a.get("emoji", ""), "notes": a.get("notes", ""),
+                       "tags": a.get("tags", [])} for a in areas],
             "projects": projects,
             "groups": groups,
         }
+
+    def tag_index(self) -> dict[str, str]:
+        """{tag name -> tag UUID} for mapping Todoist labels back to Sonto tags."""
+        return {t["name"]: t["tagUUID"] for t in self.tags()}
+
+    @staticmethod
+    def raw_index(struct: dict) -> dict[str, str]:
+        """{stable id -> raw per-read token} for areas/projects/groups, for reverse placement."""
+        idx = {}
+        for kind in ("areas", "projects", "groups"):
+            for e in struct.get(kind, []):
+                if e.get("raw"):
+                    idx[e["id"]] = e["raw"]
+        return idx
 
     def snapshot_tasks(self, today=None, *, include_completed: bool = False) -> list[dict]:
         """All tasks, merged from container reads (inbox/area/project) and the scheduled-task
@@ -191,18 +206,37 @@ class Sonto:
             tasks = [t for t in tasks if not t.get("completed")]
         return tasks
 
-    # --- writes (built out P1+; argument shapes confirmed via introspect) ---
-    def add_task(self, **args) -> Any:  # pragma: no cover - P2+
-        return self._call("add_task", args)
+    # --- writes (P2/P3, reverse direction) ---------------------------------
+    def add_task(self, **args) -> dict:
+        return self.parse(self._call("add_task", args))
 
-    def edit_task(self, **args) -> Any:  # pragma: no cover - P2+
-        return self._call("edit_task", args)
+    def edit_task(self, **args) -> dict:
+        return self.parse(self._call("edit_task", args))
 
-    def add_project(self, **args) -> Any:  # pragma: no cover - P1+
-        return self._call("add_project", args)
+    def complete_task(self, todo_uuid: str) -> dict:
+        return self.edit_task(todo_uuid=todo_uuid, completed=True)
 
-    def add_area(self, **args) -> Any:  # pragma: no cover - P1+
-        return self._call("add_area", args)
+    def delete_task(self, todo_uuid: str) -> dict:
+        return self.parse(self._call("delete_task", {"todo_uuid": todo_uuid}))
 
-    def add_group(self, **args) -> Any:  # pragma: no cover - P1+
-        return self._call("add_group", args)
+    def add_project(self, **args) -> dict:
+        return self.parse(self._call("add_project", args))
+
+    def add_area(self, **args) -> dict:
+        return self.parse(self._call("add_area", args))
+
+    def add_group(self, **args) -> dict:
+        return self.parse(self._call("add_group", args))
+
+    @staticmethod
+    def extract_todo_uuid(result: dict) -> str | None:
+        """Pull the new task's todoUUID from an add_task result (tries common shapes)."""
+        if not isinstance(result, dict):
+            return None
+        if result.get("todoUUID"):
+            return result["todoUUID"]
+        for key in ("todo", "task", "createdTodo"):
+            v = result.get(key)
+            if isinstance(v, dict) and v.get("todoUUID"):
+                return v["todoUUID"]
+        return None
